@@ -4,7 +4,7 @@
 
 import { Injectable } from '@angular/core';
 import { EventsService } from './events.service';
-//import { UtilsService } from './utils.service';
+import { UtilsService } from './utils.service';
 import { Platform } from '@ionic/angular';
 
 import * as gConst from './gConst';
@@ -29,7 +29,7 @@ export class UdpService {
     bridges: gIF.bridge_t[] = [];
 
     //ipSet = new Set();
-    //seqNum = 0;
+    seqNum = 0;
 
     test = 10;
 
@@ -47,7 +47,7 @@ export class UdpService {
     rwBuf = new gIF.rwBuf_t();
 
     constructor(private events: EventsService,
-                private platform: Platform) {
+                private utils: UtilsService) {
         this.rwBuf.wrView = this.msg;
         setTimeout(()=>{
             this.cleanAgedBridges();
@@ -149,6 +149,8 @@ export class UdpService {
                         name.push(this.rwBuf.read_uint8());
                     }
                     item.name = String.fromCharCode.apply(String, name);
+                    item.ip = this.utils.ipFromLong(this.rwBuf.read_uint32_LE());
+                    item.port = this.rwBuf.read_uint16_LE();
 
                     const key = this.itemKey(item.extAddr, item.endPoint);
                     this.events.publish('newItem', {key: key, value: item});
@@ -265,6 +267,13 @@ export class UdpService {
                     this.rdCmd.tmoRef = setTimeout(()=>{
                         this.rdCmdTmo();
                     }, gConst.RD_CMD_TMO);
+                }
+                break;
+            }
+            case gConst.SL_MSG_ZCL_CMD: {
+                const msgSeqNum = this.rwBuf.read_uint8();
+                if(msgSeqNum === this.seqNum){
+                    console.log('zcl response');
                 }
                 break;
             }
@@ -444,7 +453,7 @@ export class UdpService {
      * brief
      *
      */
-     public async udpSend(ip: string, msg: ArrayBuffer) {
+    public async udpSend(ip: string, msg: ArrayBuffer) {
 
         await UDP.send({
             socketId: this.udpSocket,

@@ -6,6 +6,7 @@ import { UdpService } from '../udp.service';
 import { UtilsService } from '../utils.service';
 
 import { UDP } from '@frontall/capacitor-udp';
+import { decode, encode } from 'base64-arraybuffer';
 
 import * as gConst from '../gConst';
 import * as gIF from '../gIF';
@@ -30,9 +31,11 @@ export class ssrComponent implements OnInit {
     hasLevel = true;
     sliderVal = 100;
 
+    rwBuf = new gIF.rwBuf_t();
+
     constructor(private udp: UdpService,
                 private utils: UtilsService) {
-        //---
+        this.rwBuf.wrView = this.msg;
     }
 
     /***********************************************************************************************
@@ -127,55 +130,55 @@ export class ssrComponent implements OnInit {
         if(this.udp.rdCmd.busy === true){
             return;
         }
-        let idx = 0;
-        this.msg.setUint16(idx, gConst.UDP_ZCL_CMD, gConst.LE);
-        idx += 2;
-        this.msg.setFloat64(idx, this.onOff.extAddr, gConst.LE);
-        idx += 8;
-        this.msg.setUint8(idx, this.onOff.endPoint);
-        idx++;
-        this.msg.setUint16(idx, gConst.CLUSTER_ID_GEN_ON_OFF, gConst.LE);
-        idx += 2;
-        this.msg.setUint8(idx, 0); // hasRsp -> no
-        idx++;
-        const cmdLenIdx = idx;
-        this.msg.setUint8(idx, 0); // cmdLen -> placeholder
-        idx++;
-        let cmdLen = idx;
-        this.msg.setUint8(idx, 0x11); // cluster spec cmd, not manu spec, client to srv dir, disable dflt rsp
-        idx++;
-        this.msg.setUint8(idx, 0); // seq num -> not used
-        idx++;
+        this.udp.seqNum = ++this.udp.seqNum % 256;
+
+        this.rwBuf.wrIdx = 0;
+        this.rwBuf.write_uint16_LE(gConst.SL_MSG_ZCL_CMD);
+        const lenIdx = this.rwBuf.wrIdx;
+        this.rwBuf.write_uint8(0);
+        // cmd data
+        const dataStartIdx = this.rwBuf.wrIdx;
+        this.rwBuf.write_uint8(this.udp.seqNum);
+        this.rwBuf.write_double_LE(this.onOff.extAddr);
+        this.rwBuf.write_uint8(this.onOff.endPoint);
+        this.rwBuf.write_uint16_LE(gConst.CLUSTER_ID_GEN_ON_OFF);
+        this.rwBuf.write_uint8(0); // hasRsp -> no
+        const cmdLenIdx = this.rwBuf.wrIdx;
+        this.rwBuf.write_uint8(0); // cmdLen -> placeholder
+        const startCmdIdx = this.rwBuf.wrIdx;
+        this.rwBuf.write_uint8(0x11); // cluster spec cmd, not manu spec, client to srv dir, disable dflt rsp
+        this.rwBuf.write_uint8(0); // seq num -> not used
         switch(state) {
             case OFF: {
-                this.msg.setUint8(idx, OFF); // ON_OFF cluster cmd OFF
-                idx++;
+                this.rwBuf.write_uint8(OFF); // ON_OFF cluster cmd OFF
                 break;
             }
             case ON: {
-                this.msg.setUint8(idx, ON); // ON_OFF cluster cmd ON
-                idx++;
+                this.rwBuf.write_uint8(ON); // ON_OFF cluster cmd ON
                 break;
             }
             case TOGGLE: {
-                this.msg.setUint8(idx, TOGGLE); // ON_OFF cluster cmd TOGGLE
-                idx++;
+                this.rwBuf.write_uint8(TOGGLE); // ON_OFF cluster cmd TOGGLE
                 break;
             }
             case LEVEL: {
-                this.msg.setUint8(idx, LEVEL); // 'extended' ON_OFF cluster cmd TOGGLE
-                idx++;
-                this.msg.setUint8(idx, this.sliderVal);
-                idx++;
+                this.rwBuf.write_uint8(LEVEL); // 'extended' ON_OFF cluster cmd TOGGLE
+                this.rwBuf.write_uint8(this.sliderVal);
                 break;
             }
         }
-        cmdLen = idx - cmdLen;
-        this.msg.setUint8(cmdLenIdx, cmdLen); // now cmdLen gets right value
-        const msgLen = idx;
-        const bufData = this.msgBuf.slice(0, msgLen);
+        const msgLen = this.rwBuf.wrIdx;
+        const cmdLen = msgLen - startCmdIdx;
+        this.rwBuf.modify_uint8(cmdLenIdx, cmdLen); // now cmdLen gets right value
+        const dataLen = msgLen - dataStartIdx;
+        this.rwBuf.modify_uint8(lenIdx, dataLen);
 
-        await this.udp.udpSend(this.onOff.hostIP, bufData);
+        await UDP.send({
+            socketId: this.udp.udpSocket,
+            address: this.onOff.ip,
+            port: this.onOff.port,
+            buffer: encode(this.msgBuf.slice(0, msgLen))
+        });
     }
 
 }
