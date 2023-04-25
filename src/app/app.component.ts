@@ -135,6 +135,10 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit{
      */
     async readSelected(){
 
+        if(this.udpBusy === true || this.socketStatus === false || this.udp.bridges.length === 0){
+            return;
+        }
+
         let ipAddr = '';
 
         try {
@@ -162,23 +166,19 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit{
             console.log(this.udp.bcAddr);
         }
 
-        if(this.udpBusy === true || this.socketStatus === false){
-            return;
-        }
-
         this.itemsMap.clear();
 
         switch(this.selectedType){
             case 'on-off actuators': {
-                this.udp.startRead(gConst.ON_OFF_ACTUATORS);
+                this.udp.readItems(gConst.ON_OFF_ACTUATORS);
                 break;
             }
             case 'temp sensors': {
-                this.udp.startRead(gConst.T_SENSORS);
+                this.udp.readItems(gConst.T_SENSORS);
                 break;
             }
             case 'humidity sensors': {
-                this.udp.startRead(gConst.RH_SENSORS);
+                this.udp.readItems(gConst.RH_SENSORS);
                 break;
             }
             default:

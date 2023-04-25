@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/prefer-for-of */
 /* eslint-disable object-shorthand */
 /* eslint-disable @typescript-eslint/member-ordering */
 
@@ -13,6 +14,7 @@ import { UDP } from '@frontall/capacitor-udp';
 import { decode, encode } from 'base64-arraybuffer';
 
 const LOC_PORT = 22802;
+const BRIDGE_TTL = 10;
 
 @Injectable({
     providedIn: 'root',
@@ -22,9 +24,12 @@ export class UdpService {
     public udpSocket: number;
 
     private msgBuf = new ArrayBuffer(1024);
-    private msg: DataView = new DataView(this.msgBuf);
+    msg: DataView = new DataView(this.msgBuf);
 
-    ipSet = new Set();
+    bridges: gIF.bridge_t[] = [];
+
+    //ipSet = new Set();
+    //seqNum = 0;
 
     test = 10;
 
@@ -39,9 +44,14 @@ export class UdpService {
         retryCnt: gConst.RD_CMD_RETRY_CNT,
     };
 
+    rwBuf = new gIF.rwBuf_t();
+
     constructor(private events: EventsService,
                 private platform: Platform) {
-        // ---
+        this.rwBuf.wrView = this.msg;
+        setTimeout(()=>{
+            this.cleanAgedBridges();
+        }, 1000);
     }
 
     /***********************************************************************************************
@@ -108,42 +118,35 @@ export class UdpService {
      *
      */
     public udpOnMsg(msg: any) {
+
         const cmdView = new DataView(decode(msg.buffer));
-        let cmdIdx = 0;
-        const pktFunc = cmdView.getUint16(cmdIdx, gConst.LE);
-        cmdIdx += 2;
+        this.rwBuf.rdView = cmdView;
+        this.rwBuf.rdIdx = 0;
+
+        const pktFunc = this.rwBuf.read_uint16_LE();
         switch(pktFunc) {
             case gConst.BRIDGE_ID_RSP: {
-                this.ipSet.add(msg.remoteAddress);
+                //this.ipSet.add(msg.remoteAddress);
+                this.addBridge(msg.remoteAddress);
                 break;
             }
             case gConst.ON_OFF_ACTUATORS: {
-                const startIdx = cmdView.getUint16(cmdIdx, gConst.LE);
-                cmdIdx += 2;
-                const numItems = cmdView.getUint16(cmdIdx, gConst.LE);
-                cmdIdx += 2;
-                const doneFlag = cmdView.getInt8(cmdIdx);
-                cmdIdx++;
+                const startIdx = this.rwBuf.read_uint16_LE();
+                const numItems = this.rwBuf.read_uint16_LE();
+                const doneFlag = this.rwBuf.read_uint8();
                 for(let i = 0; i < numItems; i++) {
                     const item = {} as gIF.onOffItem_t;
                     item.hostIP = msg.remoteAddress;
                     item.type = gConst.ACTUATOR_ON_OFF;
-                    item.partNum = cmdView.getUint32(cmdIdx, gConst.LE);
-                    cmdIdx += 4;
-                    item.extAddr = cmdView.getFloat64(cmdIdx, gConst.LE);
-                    cmdIdx += 8;
-                    item.endPoint = cmdView.getUint8(cmdIdx);
-                    cmdIdx++;
-                    item.state = cmdView.getUint8(cmdIdx);
-                    cmdIdx++;
-                    item.level = cmdView.getUint8(cmdIdx);
-                    cmdIdx++;
-                    const nameLen = cmdView.getUint8(cmdIdx);
-                    cmdIdx++;
+                    item.partNum = this.rwBuf.read_uint32_LE();
+                    item.extAddr = this.rwBuf.read_double_LE();
+                    item.endPoint = this.rwBuf.read_uint8();
+                    item.state = this.rwBuf.read_uint8();
+                    item.level = this.rwBuf.read_uint8();
+                    const nameLen = this.rwBuf.read_uint8();
                     const name = [];
                     for(let k = 0; k < nameLen; k++) {
-                        name.push(cmdView.getUint8(cmdIdx));
-                        cmdIdx++;
+                        name.push(this.rwBuf.read_uint8());
                     }
                     item.name = String.fromCharCode.apply(String, name);
 
@@ -179,31 +182,23 @@ export class UdpService {
             case gConst.P_ATM_SENSORS:
             case gConst.RH_SENSORS:
             case gConst.T_SENSORS: {
-                const startIdx = cmdView.getUint16(cmdIdx, gConst.LE);
-                cmdIdx += 2;
-                const numItems = cmdView.getUint16(cmdIdx, gConst.LE);
-                cmdIdx += 2;
-                const doneFlag = cmdView.getInt8(cmdIdx);
-                cmdIdx++;
+                const startIdx = this.rwBuf.read_uint16_LE();
+                const numItems = this.rwBuf.read_uint16_LE();
+                const doneFlag = this.rwBuf.read_uint8();
                 for(let i = 0; i < numItems; i++) {
-                    let val: number;
-                    let units: number;
+                    //let val: number;
+                    //let units: number;
                     const item = {} as gIF.sensorItem_t;
                     item.hostIP = msg.remoteAddress;
                     item.type = gConst.SENSOR;
-                    item.partNum = cmdView.getUint32(cmdIdx, gConst.LE);
-                    cmdIdx += 4;
-                    item.extAddr = cmdView.getFloat64(cmdIdx, gConst.LE);
-                    cmdIdx += 8;
-                    item.endPoint = cmdView.getUint8(cmdIdx);
-                    cmdIdx++;
+                    item.partNum = this.rwBuf.read_uint32_LE();
+                    item.extAddr = this.rwBuf.read_double_LE();
+                    item.endPoint = this.rwBuf.read_uint8();
                     switch(pktFunc) {
                         case gConst.T_SENSORS: {
-                            val = cmdView.getInt16(cmdIdx, gConst.LE);
-                            cmdIdx += 2;
+                            let val = this.rwBuf.read_int16_LE();
                             val = val / 10.0;
-                            units = cmdView.getUint16(cmdIdx, gConst.LE);
-                            cmdIdx += 2;
+                            const units = this.rwBuf.read_uint16_LE();
                             if(units === gConst.DEG_F) {
                                 item.formatedVal = `${val.toFixed(1)} °F`;
                             }
@@ -213,18 +208,15 @@ export class UdpService {
                             break;
                         }
                         case gConst.RH_SENSORS: {
-                            val = cmdView.getUint16(cmdIdx, gConst.LE);
-                            cmdIdx += 2;
+                            let val = this.rwBuf.read_uint16_LE();
                             val = Math.round(val / 10.0);
                             item.formatedVal = `${val.toFixed(0)} %rh`;
                             break;
                         }
                         case gConst.P_ATM_SENSORS: {
-                            val = cmdView.getUint16(cmdIdx, gConst.LE);
-                            cmdIdx += 2;
+                            let val = this.rwBuf.read_uint16_LE();
                             val = val / 10.0;
-                            units = cmdView.getUint16(cmdIdx, gConst.LE);
-                            cmdIdx += 2;
+                            const units = this.rwBuf.read_uint16_LE();
                             if(units === gConst.IN_HG) {
                                 item.formatedVal = `${val.toFixed(1)} inHg`;
                             }
@@ -235,19 +227,16 @@ export class UdpService {
                             break;
                         }
                         case gConst.BAT_VOLTS: {
-                            val = cmdView.getUint16(cmdIdx, gConst.LE);
-                            cmdIdx += 2;
+                            let val = this.rwBuf.read_uint16_LE();
                             val = val / 10.0;
                             item.formatedVal = `${val.toFixed(1)} V`;
                             break;
                         }
                     }
-                    const nameLen = cmdView.getUint8(cmdIdx);
-                    cmdIdx++;
+                    const nameLen = this.rwBuf.read_uint8();
                     const name = [];
                     for(let k = 0; k < nameLen; k++) {
-                        name.push(cmdView.getUint8(cmdIdx));
-                        cmdIdx++;
+                        name.push(this.rwBuf.read_uint8());
                     }
                     item.name = String.fromCharCode.apply(String, name);
 
@@ -286,44 +275,22 @@ export class UdpService {
     }
 
     /***********************************************************************************************
-     * fn          startRead
-     *
-     * brief
-     *
-     */
-    public async startRead(cmdID: number) {
-
-        let idx = 0;
-        this.msg.setUint16(idx, gConst.BRIDGE_ID_REQ, gConst.LE);
-        idx += 2;
-        const len = idx;
-        await UDP.send({
-            socketId: this.udpSocket,
-            address: this.bcAddr, //'192.168.1.255',
-            port: gConst.UDP_PORT,
-            buffer: encode(this.msgBuf.slice(0, len))
-        });
-
-        this.ipSet.clear();
-        this.rdCmd.cmdID = cmdID;
-        setTimeout(()=>{
-            this.readItems();
-        }, 500);
-    }
-
-    /***********************************************************************************************
      * fn          readItems
      *
      * brief
      *
      */
-    public readItems() {
+    public readItems(cmdID: number) {
 
-        if(this.ipSet.size === 0) {
+        if(this.bridges.length === 0){
             return;
         }
+        this.rdCmd.cmdID = cmdID;
         this.rdCmd.busy = true;
-        this.rdCmd.ip = [...this.ipSet];
+        this.rdCmd.ip = [];
+        for(let i = 0; i < this.bridges.length; i++){
+            this.rdCmd.ip.push(this.bridges[i].ip);
+        }
         this.rdCmd.idx = 0;
         this.rdCmd.retryCnt = gConst.RD_CMD_RETRY_CNT;
         this.rdCmd.tmoRef = setTimeout(()=>{
@@ -341,12 +308,11 @@ export class UdpService {
      */
     public async getItems(ip: string, idx: number) {
 
-        let msgIdx = 0;
-        this.msg.setUint16(msgIdx, this.rdCmd.cmdID, gConst.LE);
-        msgIdx += 2;
-        this.msg.setUint16(msgIdx, idx, gConst.LE);
-        msgIdx += 2;
-        const len = msgIdx;
+        this.rwBuf.wrIdx = 0;
+        this.rwBuf.write_uint16_LE(this.rdCmd.cmdID);
+        this.rwBuf.write_uint16_LE(idx);
+
+        const len = this.rwBuf.wrIdx;
         await UDP.send({
             socketId: this.udpSocket,
             address: ip,
@@ -422,7 +388,58 @@ export class UdpService {
     }
 
     /***********************************************************************************************
-     * fn          getItems
+     * fn          addBridge
+     *
+     * brief
+     *
+     */
+    private addBridge(ip: string) {
+
+        let newFlag = true;
+        let i = this.bridges.length;
+        if(i > 0){
+            while(i--){
+                if(this.bridges[i].ip === ip){
+                    this.bridges[i].ttl = BRIDGE_TTL;
+                    newFlag = false;
+                }
+            }
+        }
+        if(newFlag === true){
+            const newBridge = {
+                ip: ip,
+                ttl: BRIDGE_TTL
+            };
+            this.bridges.push(newBridge);
+        }
+    }
+
+    /***********************************************************************************************
+     * fn          cleanAgedBridges
+     *
+     * brief
+     *
+     */
+    private cleanAgedBridges() {
+
+        let i = this.bridges.length;
+        if(i > 0){
+            while(i--){
+                if(this.bridges[i].ttl > 0){
+                    this.bridges[i].ttl--;
+                }
+                else {
+                    this.bridges.splice(i, 1);
+                }
+            }
+        }
+        setTimeout(()=>{
+            this.cleanAgedBridges();
+        }, 1000);
+    }
+
+    /***********************************************************************************************
+     * fn          udpSend
      *
      * brief
      *
