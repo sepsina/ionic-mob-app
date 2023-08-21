@@ -12,7 +12,7 @@
             <button id="read-button"
                     mat-stroked-button
                     (click)="readSelected()"
-                    [disabled]="udpBusy">
+                    [disabled]="!udp.bridgesFlag || udpBusy">
                 <mat-icon>file_download</mat-icon>
                 Read
             </button>

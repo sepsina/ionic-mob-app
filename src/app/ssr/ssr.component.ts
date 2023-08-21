@@ -173,12 +173,9 @@ export class ssrComponent implements OnInit {
         const dataLen = msgLen - dataStartIdx;
         this.rwBuf.modify_uint8(lenIdx, dataLen);
 
-        await UDP.send({
-            socketId: this.udp.udpSocket,
-            address: this.onOff.ip,
-            port: this.onOff.port,
-            buffer: encode(this.msgBuf.slice(0, msgLen))
-        });
+        this.udp.sendPkt(this.onOff.ip,
+                         this.onOff.port,
+                         this.msgBuf.slice(0, msgLen));
     }
 
 }

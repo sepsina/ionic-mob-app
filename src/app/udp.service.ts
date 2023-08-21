@@ -10,9 +10,6 @@ import { Platform } from '@ionic/angular';
 import * as gConst from './gConst';
 import * as gIF from './gIF';
 
-import { UDP } from '@frontall/capacitor-udp';
-import { decode, encode } from 'base64-arraybuffer';
-
 const LOC_PORT = 22802;
 const BRIDGE_TTL = 10;
 
@@ -21,19 +18,16 @@ const BRIDGE_TTL = 10;
 })
 export class UdpService {
 
-    public udpSocket: number;
+    socketID: number;
+    udpSock = (window as any).chrome.sockets.udp;
 
     private msgBuf = new ArrayBuffer(1024);
     msg: DataView = new DataView(this.msgBuf);
 
     bridges: gIF.bridge_t[] = [];
+    bridgesFlag = false;
 
-    //ipSet = new Set();
     seqNum = 0;
-
-    test = 10;
-
-    bcAddr = '';
 
     rdCmd: gIF.rdCmd_t = {
         ip: [],
@@ -60,38 +54,27 @@ export class UdpService {
      * brief
      *
      */
-    async initSocket() {
+    initSocket() {
 
-        this.udpSocket = -1;
-
-        try {
-            //await UDP.closeAllSockets();
-            const info = await UDP.create();
-            this.udpSocket = info.socketId;
-            const test = await UDP.bind({
-                socketId: info.socketId,
-                address: info.ipv4,
-                port: LOC_PORT
-            });
-            console.log(test);
-            await UDP.setBroadcast({
-                socketId: info.socketId,
-                enabled: true
-            });
-            await UDP.setPaused({
-                socketId: info.socketId,
-                paused: false
-            });
-            UDP.addListener('receive', (msg)=>{
-                if(msg.socketId === this.udpSocket) {
-                    this.udpOnMsg(msg);
+        this.udpSock.create((createInfo)=>{
+            this.socketID = createInfo.socketId;
+            this.udpSock.bind(
+                createInfo.socketId,
+                '0.0.0.0',
+                LOC_PORT,
+                (res)=>{
+                    if(res >= 0) {
+                        this.udpSock.setBroadcast(createInfo.socketId, true);
+                        this.udpSock.setPaused(createInfo.socketId, false);
+                    }
                 }
-            });
-            this.events.publish('socketStatus', true);
-        }
-        catch(err) {
-            console.log(err);
-        }
+            );
+        });
+        this.udpSock.onReceive.addListener((msg) => {
+            if(msg.socketId === this.socketID) {
+                this.udpOnMsg(msg);
+            }
+        });
     }
 
     /***********************************************************************************************
@@ -100,15 +83,9 @@ export class UdpService {
      * brief
      *
      */
-     public async closeSocket() {
-        try {
-            await UDP.close({
-                socketId: this.udpSocket
-            });
-        }
-        catch(err) {
-            console.log(err);
-        }
+     public closeSocket() {
+
+        this.udpSock.close(this.socketID);
     }
 
     /***********************************************************************************************
@@ -119,14 +96,13 @@ export class UdpService {
      */
     public udpOnMsg(msg: any) {
 
-        const cmdView = new DataView(decode(msg.buffer));
+        const cmdView = new DataView(msg.data);
         this.rwBuf.rdView = cmdView;
         this.rwBuf.rdIdx = 0;
 
         const pktFunc = this.rwBuf.read_uint16_LE();
         switch(pktFunc) {
             case gConst.BRIDGE_ID_RSP: {
-                //this.ipSet.add(msg.remoteAddress);
                 this.addBridge(msg.remoteAddress);
                 break;
             }
@@ -136,7 +112,6 @@ export class UdpService {
                 const doneFlag = this.rwBuf.read_uint8();
                 for(let i = 0; i < numItems; i++) {
                     const item = {} as gIF.onOffItem_t;
-                    item.hostIP = msg.remoteAddress;
                     item.type = gConst.ACTUATOR_ON_OFF;
                     item.partNum = this.rwBuf.read_uint32_LE();
                     item.extAddr = this.rwBuf.read_double_LE();
@@ -188,8 +163,6 @@ export class UdpService {
                 const numItems = this.rwBuf.read_uint16_LE();
                 const doneFlag = this.rwBuf.read_uint8();
                 for(let i = 0; i < numItems; i++) {
-                    //let val: number;
-                    //let units: number;
                     const item = {} as gIF.sensorItem_t;
                     item.hostIP = msg.remoteAddress;
                     item.type = gConst.SENSOR;
@@ -322,11 +295,8 @@ export class UdpService {
         this.rwBuf.write_uint16_LE(idx);
 
         const len = this.rwBuf.wrIdx;
-        await UDP.send({
-            socketId: this.udpSocket,
-            address: ip,
-            port: gConst.UDP_PORT,
-            buffer: encode(this.msgBuf.slice(0, len))
+        this.udpSock.send(this.socketID, this.msgBuf.slice(0, len), ip, gConst.UDP_PORT, ()=>{
+            // ---
         });
     }
 
@@ -387,13 +357,6 @@ export class UdpService {
             key[j] = dv.getUint8(j).toString(16);
         }
         return `item-${key.join('')}`;
-
-        /*
-        let key = `item-${shortAddr.toString(16).padStart(4, '0').toUpperCase()}`;
-        key += `:${endPoint.toString(16).padStart(2, '0').toUpperCase()}`;
-
-        return key;
-        */
     }
 
     /***********************************************************************************************
@@ -421,6 +384,12 @@ export class UdpService {
             };
             this.bridges.push(newBridge);
         }
+        if(this.bridges.length > 0){
+            this.bridgesFlag = true;
+        }
+        else {
+            this.bridgesFlag = false;
+        }
     }
 
     /***********************************************************************************************
@@ -442,24 +411,26 @@ export class UdpService {
                 }
             }
         }
+        if(this.bridges.length > 0){
+            this.bridgesFlag = true;
+        }
+        else {
+            this.bridgesFlag = false;
+        }
         setTimeout(()=>{
             this.cleanAgedBridges();
         }, 1000);
     }
 
     /***********************************************************************************************
-     * fn          udpSend
+     * fn          sendPkt
      *
      * brief
      *
      */
-    public async udpSend(ip: string, msg: ArrayBuffer) {
-
-        await UDP.send({
-            socketId: this.udpSocket,
-            address: ip,
-            port: gConst.UDP_PORT,
-            buffer: encode(msg)
+    public sendPkt(ip: string, port: number, msg: ArrayBuffer) {
+        this.udpSock.send(this.socketID, msg, ip, port, ()=>{
+            // ---
         });
     }
 }

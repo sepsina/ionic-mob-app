@@ -122,8 +122,6 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit{
     selChanged(event: MatSelectChange){
 
         this.selectedType = event.value;
-        console.log(this.selectedType);
-
         this.readSelected();
     }
 
@@ -135,37 +133,9 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit{
      */
     async readSelected(){
 
-        if(this.udpBusy === true || this.socketStatus === false || this.udp.bridges.length === 0){
+        if(this.udpBusy === true || this.udp.bridges.length === 0){
             return;
         }
-
-        let ipAddr = '';
-
-        try {
-            const carrierAddr = await this.nwkIF.getCarrierIPAddress();
-            ipAddr = carrierAddr.ip;
-        }
-        catch(error) {
-            console.log(`carrier: ${error}`);
-        }
-        try {
-            const wifiAddr = await this.nwkIF.getWiFiIPAddress();
-            ipAddr = wifiAddr.ip;
-        }
-        catch(error) {
-            console.log(`wifi: ${error}`);
-        }
-
-        if(ipAddr === ''){
-            return;
-        }
-        else {
-            const octetArr = ipAddr.split('.');
-            octetArr[3] = '255';
-            this.udp.bcAddr = octetArr.join('.');
-            console.log(this.udp.bcAddr);
-        }
-
         this.itemsMap.clear();
 
         switch(this.selectedType){

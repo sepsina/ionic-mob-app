@@ -22,7 +22,6 @@ export interface sensorItem_t {
 export interface onOffItem_t {
     ip: string;
     port: number;
-    hostIP: string;
     type: number;
     name: string;
     state: number;
