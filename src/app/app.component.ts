@@ -63,6 +63,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit{
     ngOnInit() {
 
         this.udpBusy = this.udp.rdCmd.busy;
+        this.udp.itemsRef = this.itemsMap;
 
         this.events.subscribe('newItem', (msg)=>{
             this.ngZone.run(()=>{

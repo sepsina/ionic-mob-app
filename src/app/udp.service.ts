@@ -2,7 +2,7 @@
 /* eslint-disable object-shorthand */
 /* eslint-disable @typescript-eslint/member-ordering */
 
-import { Injectable } from '@angular/core';
+import { Injectable, NgZone } from '@angular/core';
 import { EventsService } from './events.service';
 import { UtilsService } from './utils.service';
 import { Platform } from '@ionic/angular';
@@ -38,10 +38,13 @@ export class UdpService {
         retryCnt: gConst.RD_CMD_RETRY_CNT,
     };
 
+    itemsRef: any;
+
     rwBuf = new gIF.rwBuf_t();
 
     constructor(private events: EventsService,
-                private utils: UtilsService) {
+                private utils: UtilsService,
+                private ngZone: NgZone) {
         this.rwBuf.wrView = this.msg;
         setTimeout(()=>{
             this.cleanAgedBridges();
@@ -126,6 +129,7 @@ export class UdpService {
                     item.name = String.fromCharCode.apply(String, name);
                     item.ip = this.utils.ipFromLong(this.rwBuf.read_uint32_LE());
                     item.port = this.rwBuf.read_uint16_LE();
+                    item.busy = false;
 
                     const key = this.itemKey(item.extAddr, item.endPoint);
                     this.events.publish('newItem', {key: key, value: item});
@@ -245,8 +249,27 @@ export class UdpService {
             }
             case gConst.SL_MSG_ZCL_CMD: {
                 const msgSeqNum = this.rwBuf.read_uint8();
+                const extAddr = this.rwBuf.read_double_LE();
+                const endPoint = this.rwBuf.read_uint8();
+                const clusterID = this.rwBuf.read_uint16_LE();
+                const status = this.rwBuf.read_uint8();
                 if(msgSeqNum === this.seqNum){
-                    console.log('zcl response');
+                    if(clusterID === gConst.CLUSTER_ID_GEN_ON_OFF){
+                        const key = this.itemKey(extAddr, endPoint);
+                        const item: gIF.onOffItem_t = this.itemsRef.get(key);
+                        if(item){
+                            if(status === 0){
+                                console.log(`cmd to ${item.name}: success`);
+                            }
+                            else {
+                                console.log(`cmd to ${item.name}: fail`);
+                            }
+                            clearTimeout(item.tmo);
+                            this.ngZone.run(()=>{
+                                item.busy = false;
+                            });
+                        }
+                    }
                 }
                 break;
             }
@@ -295,9 +318,14 @@ export class UdpService {
         this.rwBuf.write_uint16_LE(idx);
 
         const len = this.rwBuf.wrIdx;
-        this.udpSock.send(this.socketID, this.msgBuf.slice(0, len), ip, gConst.UDP_PORT, ()=>{
-            // ---
-        });
+        this.udpSock.send(this.socketID,
+                          this.msgBuf.slice(0, len),
+                          ip,
+                          gConst.UDP_PORT,
+                          ()=>{
+                              // ---
+                          }
+        );
     }
 
     /***********************************************************************************************

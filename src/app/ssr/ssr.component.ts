@@ -1,12 +1,9 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 /* eslint-disable @typescript-eslint/member-ordering */
 /* eslint-disable @angular-eslint/component-selector */
-import { Component, OnInit, Input } from '@angular/core';
+import { Component, OnInit, Input, NgZone } from '@angular/core';
 import { UdpService } from '../udp.service';
 import { UtilsService } from '../utils.service';
-
-import { UDP } from '@frontall/capacitor-udp';
-import { decode, encode } from 'base64-arraybuffer';
 
 import * as gConst from '../gConst';
 import * as gIF from '../gIF';
@@ -34,7 +31,8 @@ export class ssrComponent implements OnInit {
     rwBuf = new gIF.rwBuf_t();
 
     constructor(private udp: UdpService,
-                private utils: UtilsService) {
+                private utils: UtilsService,
+                private ngZone: NgZone) {
         this.rwBuf.wrView = this.msg;
     }
 
@@ -176,6 +174,13 @@ export class ssrComponent implements OnInit {
         this.udp.sendPkt(this.onOff.ip,
                          this.onOff.port,
                          this.msgBuf.slice(0, msgLen));
+
+        this.ngZone.run(()=>{
+            this.onOff.busy = true;
+        });
+        this.onOff.tmo = setTimeout(() => {
+            this.onOff.busy = false;
+        }, 1000);
     }
 
 }
